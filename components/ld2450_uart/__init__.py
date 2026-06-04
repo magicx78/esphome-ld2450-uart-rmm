@@ -60,54 +60,59 @@ RMM_SCHEMA = cv.Schema(
     }
 )
 
-def _coord_sensor_config(name, unit, multiply):
-    """Build and validate a coordinate sensor config named exactly `name`."""
+def _coord_sensor_config(sid, name, unit, multiply):
+    """Build and validate a coordinate sensor: HA entity name `name`, id `sid`."""
     kwargs = {
         "unit_of_measurement": unit,
         "accuracy_decimals": 1 if multiply is not None else 0,
         "icon": "mdi:radar",
     }
-    conf = {CONF_ID: name, CONF_NAME: name}
+    conf = {CONF_ID: sid, CONF_NAME: name}
     if multiply is not None:
         conf[CONF_FILTERS] = [{"multiply": multiply}]
     return core_sensor.sensor_schema(**kwargs)(conf)
 
 
-def _count_sensor_config(name):
+def _count_sensor_config(sid, name):
     return core_sensor.sensor_schema(accuracy_decimals=0, icon="mdi:account-group")(
-        {CONF_ID: name, CONF_NAME: name}
+        {CONF_ID: sid, CONF_NAME: name}
     )
 
 
 def _expand_rmm(config):
     """When `rmm:` is enabled, synthesise the RMM-compatible sensor configs.
 
-    Runs during validation so that generated sensor IDs are registered normally.
-    Produces, for radar_name R:
-      sensor.R_target_1_x / _y ... R_target_3_x / _y
-      sensor.R_presence_target_count
+    IMPORTANT: Home Assistant prefixes every entity_id with the device name, so
+    the sensors are given SHORT names (`target_1_x`, ...). Combined with a device
+    whose name is `radar_name` this yields the exact ids RMM expects:
+      sensor.<radar_name>_target_1_x / _y ... and _presence_target_count
+    (_final_validate enforces that the device name matches radar_name.)
+    The internal C++ id keeps the radar_name prefix to stay globally unique.
     """
     rmm = config.get(CONF_RMM)
     if rmm is None or not rmm[CONF_ENABLED]:
         return config
 
-    name = rmm[CONF_RADAR_NAME]
+    radar = rmm[CONF_RADAR_NAME]
     unit = rmm[CONF_UNIT]
     multiply = None if unit == "mm" else 0.1  # native values are mm
 
     coord = []
     for i in range(1, 4):
         for axis in ("x", "y"):
-            sname = f"{name}_target_{i}_{axis}"
             coord.append(
                 {
                     "axis": axis,
                     "index": i - 1,
-                    "config": _coord_sensor_config(sname, unit, multiply),
+                    "config": _coord_sensor_config(
+                        f"{radar}_target_{i}_{axis}", f"target_{i}_{axis}", unit, multiply
+                    ),
                 }
             )
     config[_RMM_COORD_SENSORS] = coord
-    config[_RMM_COUNT_SENSOR] = _count_sensor_config(f"{name}_presence_target_count")
+    config[_RMM_COUNT_SENSOR] = _count_sensor_config(
+        f"{radar}_presence_target_count", "presence_target_count"
+    )
     return config
 
 
@@ -125,6 +130,41 @@ CONFIG_SCHEMA = cv.All(
     .extend(cv.COMPONENT_SCHEMA),
     _expand_rmm,
 )
+
+
+def _ha_slug(text):
+    """Mimic Home Assistant's entity_id slugify (lowercase, non-alnum -> _)."""
+    return re.sub(r"[^a-z0-9_]+", "_", text.lower()).strip("_")
+
+
+def _final_validate(config):
+    """Ensure the device name matches radar_name.
+
+    Home Assistant builds entity_id as `<device_name>_<entity_name>`. RMM needs
+    `sensor.<radar_name>_target_1_x`, so the device's (friendly) name MUST slugify
+    to radar_name. Caught here at config time instead of as a surprise in HA.
+    """
+    rmm = config.get(CONF_RMM)
+    if not rmm or not rmm[CONF_ENABLED]:
+        return config
+    from esphome.core import CORE
+
+    device = CORE.friendly_name or CORE.name
+    slug = _ha_slug(device)
+    if slug != rmm[CONF_RADAR_NAME]:
+        suggested = rmm[CONF_RADAR_NAME].replace("_", "-")
+        raise cv.Invalid(
+            f"rmm.radar_name '{rmm[CONF_RADAR_NAME]}' does not match this device's "
+            f"name '{device}' (Home Assistant entity_id prefix '{slug}'). Because HA "
+            f"prefixes every entity_id with the device name, RMM would see "
+            f"'sensor.{slug}_target_1_x' instead. Fix by setting `esphome: name: "
+            f"{suggested}` (and no conflicting friendly_name), or set radar_name: "
+            f"'{slug}'."
+        )
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = _final_validate
 
 
 async def to_code(config):

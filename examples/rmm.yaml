@@ -12,9 +12,12 @@
 #
 # Validate locally:  esphome config examples/rmm.yaml
 
+# The device name MUST match rmm.radar_name (HA prefixes entity_ids with the
+# device name). name: wohnzimmer-ld2450 / friendly_name: Wohnzimmer LD2450 both
+# slugify to "wohnzimmer_ld2450".
 esphome:
-  name: ld2450-rmm
-  friendly_name: LD2450 RMM
+  name: wohnzimmer-ld2450
+  friendly_name: Wohnzimmer LD2450
 
 esp32:
   board: esp32dev

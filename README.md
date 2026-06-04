@@ -11,9 +11,15 @@ binary sensor and a target-count sensor. When the `rmm:` option is enabled it
 auto-creates sensors named exactly the way RMM expects, so a radar shows up in
 RMM with no manual entity renaming.
 
-> **Status:** YAML/codegen validated and firmware-compiled with ESPHome 2026.5.2;
-> the frame parser is covered by host unit tests. **It has not yet been run on
-> real hardware** — see [Known limitations](#known-limitations).
+> **Status:** Tested on **real hardware** — an ESP32 (esp32dev) + HLK-LD2450 on
+> UART (GPIO21/22 @ 256000), flashed with ESPHome 2026.5.2 and added to a local
+> Home Assistant 2026.2.3. The radar reports real targets (e.g. x=-347 mm,
+> y=434 mm, presence on, count=1) and HA registers exactly
+> `sensor.ble_kueche_target_1_x … _3_y` and `sensor.ble_kueche_presence_target_count`.
+> The frame parser also has host unit tests. The **RMM device-name requirement**
+> below was discovered and fixed during that hardware test. Still not exercised on
+> hardware: the config commands (Bluetooth/restart/factory-reset/multi-target) and
+> the final "add radar" click inside the RMM UI — see [Known limitations](#known-limitations).
 
 ---
 
@@ -87,6 +93,10 @@ your own entity names.
 ### RMM — [`examples/rmm.yaml`](examples/rmm.yaml)
 
 ```yaml
+esphome:
+  name: wohnzimmer-ld2450        # device name MUST slugify to radar_name
+  friendly_name: Wohnzimmer LD2450
+
 ld2450_uart:
   id: radar
   uart_id: uart_ld2450
@@ -95,6 +105,14 @@ ld2450_uart:
     radar_name: wohnzimmer_ld2450
     unit: mm
 ```
+
+> **The device name must match `radar_name`.** Home Assistant prefixes every
+> entity_id with the device name (`sensor.<device>_<entity>`), so the component
+> gives the RMM sensors short names (`target_1_x`, …) and relies on the device
+> name to form the prefix. If `radar_name` and the device name don't match, the
+> config **fails validation** with a message telling you exactly what to set.
+> Both `name: wohnzimmer-ld2450` and `friendly_name: Wohnzimmer LD2450` slugify
+> to `wohnzimmer_ld2450`.
 
 This produces exactly:
 
@@ -169,10 +187,15 @@ hardware — see below.)
 
 ## Known limitations
 
-- **No hardware test yet.** The component validates, compiles and passes the
-  host parser tests, but it has **not** been run against a physical LD2450 +
-  ESP32. Live target values, the config commands (Bluetooth/restart/etc.) and
-  RMM's live discovery are therefore **unverified on real hardware**.
+- **Tested on hardware** for the data path (parsing, sensors, presence,
+  target_count, HA entity registration with correct RMM names). **Not yet
+  exercised on hardware:** the UART **config commands** (Bluetooth on/off,
+  multi/single-target, restart, factory-reset) — the command frames follow the
+  HLK protocol / upstream ESPHome `ld2450` but were not round-tripped against a
+  module.
+- **RMM end-to-end:** the entities RMM keys on are present in HA with the exact
+  expected names, so RMM will discover the radar. The final step of *adding* the
+  radar inside the RMM UI is a user action and was not performed/automated.
 - `target_count` counts targets where `x != 0 || y != 0`; the LD2450 does not
   distinguish "still" vs "moving" in the basic data frame, so that split is not
   exposed.

@@ -7,9 +7,10 @@
 # Validate locally:  esphome config examples/full.yaml
 # Compile firmware:  esphome compile examples/full.yaml
 
+# Device name must match rmm.radar_name (HA prefixes entity_ids with it).
 esphome:
-  name: ld2450-full
-  friendly_name: LD2450 Full
+  name: wohnzimmer-ld2450
+  friendly_name: Wohnzimmer LD2450
 
 esp32:
   board: esp32dev

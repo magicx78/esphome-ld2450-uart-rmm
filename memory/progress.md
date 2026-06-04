@@ -19,9 +19,19 @@ optionaler RMM-kompatibler Sensor-Namensgebung. Eigenes GitHub-Repo.
 - [x] git init + initial commit (branch main)
 - [x] GitHub-Repo erstellt + gepusht: https://github.com/magicx78/esphome-ld2450-uart-rmm
 
-## Bewusst offen (keine Hardware)
-- Kein realer LD2450/ESP32 → keine Live-Werte, keine RMM-Live-Erkennung,
-  Kommando-Frames (BT/Restart/…) nicht am Modul gegengetestet.
+## Hardware-Test (2026-06-04) — DURCHGEFÜHRT
+- ESP32 (esp32dev, MAC a4:e5:7c:fb:50:28) + LD2450 an UART GPIO21/22 @256000.
+- Geflasht via ESPHome 2026.5.2 (USB→WSL via usbipd, /dev/ttyACM0).
+- Echte Radarwerte bestätigt (API): target_1_x=-347, target_1_y=434, presence=on, count=1.
+- In HA (2026.2.3) aufgenommen → exakt sensor.ble_kueche_target_1_x … _3_y +
+  _presence_target_count. Alte doppelte Entities von ESPHome-Integration auto-entfernt.
+- **Bug gefunden & gefixt**: HA stellt entity_id immer Geräte-Name voran →
+  rmm: nutzt jetzt KURZE Sensor-Namen + FINAL_VALIDATE erzwingt Geräte-Name==radar_name.
+
+## Noch offen
+- UART-Config-Kommandos (BT/Restart/Factory/Multi) nicht am Modul gegengetestet.
+- RMM-UI-„Radar hinzufügen" ist eine Nutzeraktion (nicht automatisiert); Entities
+  sind aber korrekt da, RMM-Discovery-Voraussetzung erfüllt.
 
 ## Wichtige Details
 Siehe `memory/freshness.md` für Protokoll- und Codegen-Fakten.
