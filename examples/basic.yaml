@@ -54,6 +54,8 @@ sensor:
         name: "Target 1 Speed"
       distance:
         name: "Target 1 Distance"
+      angle:
+        name: "Target 1 Angle"
       resolution:
         name: "Target 1 Resolution"
     target_2:
@@ -70,4 +72,10 @@ sensor:
 binary_sensor:
   - platform: ld2450_uart
     ld2450_uart_id: radar
-    name: "Presence"
+    presence:
+      name: "Presence"
+    target_1:
+      present:
+        name: "Target 1 Present"
+      moving:
+        name: "Target 1 Moving"

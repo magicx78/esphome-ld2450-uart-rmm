@@ -18,6 +18,7 @@ DEPENDENCIES = ["ld2450_uart"]
 
 CONF_X = "x"
 CONF_Y = "y"
+CONF_ANGLE = "angle"
 CONF_TARGET_COUNT = "target_count"
 
 UNIT_MILLIMETER = "mm"
@@ -52,6 +53,12 @@ _TARGET_SCHEMA = cv.Schema(
             device_class=DEVICE_CLASS_DISTANCE,
             state_class=STATE_CLASS_MEASUREMENT,
         ),
+        cv.Optional(CONF_ANGLE): sensor.sensor_schema(
+            unit_of_measurement="°",
+            accuracy_decimals=1,
+            state_class=STATE_CLASS_MEASUREMENT,
+            icon="mdi:angle-acute",
+        ),
         cv.Optional(CONF_RESOLUTION): sensor.sensor_schema(
             unit_of_measurement=UNIT_MILLIMETER,
             accuracy_decimals=0,
@@ -79,6 +86,7 @@ _SETTERS = {
     CONF_Y: "set_y_sensor",
     CONF_SPEED: "set_speed_sensor",
     CONF_DISTANCE: "set_distance_sensor",
+    CONF_ANGLE: "set_angle_sensor",
     CONF_RESOLUTION: "set_resolution_sensor",
 }
 

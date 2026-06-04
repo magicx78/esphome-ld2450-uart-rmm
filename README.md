@@ -26,8 +26,9 @@ RMM with no manual entity renaming.
 ## Features
 
 - Reads the 30-byte LD2450 data frame (`AA FF 03 00 … 55 CC`) with header resync.
-- Per target (1–3): `x`, `y` (mm), `speed` (mm/s), `distance` (mm), `resolution` (mm).
-- `presence` binary sensor (occupancy) and `target_count` sensor.
+- Per target (1–3): `x`, `y` (mm), `speed` (mm/s), `distance` (mm), `angle` (°),
+  `resolution` (mm), plus `present` and `moving` binary sensors.
+- Overall `presence` binary sensor (occupancy) and `target_count` sensor.
 - Optional **RMM** block: generates `sensor.<radar_name>_target_N_x/_y` and
   `sensor.<radar_name>_presence_target_count`.
 - Configuration controls: **Bluetooth** on/off switch, **multi/single-target**
@@ -180,9 +181,9 @@ hardware — see below.)
 
 ### Platforms
 
-- `sensor:` — `target_1/2/3:` each with `x`, `y`, `speed`, `distance`, `resolution`; plus `target_count`.
-- `binary_sensor:` — `presence` (the platform entry itself).
-- `switch:` — `bluetooth`, `multi_target`.
+- `sensor:` — `target_1/2/3:` each with `x`, `y`, `speed`, `distance`, `angle`, `resolution`; plus `target_count`.
+- `binary_sensor:` — `presence:` plus `target_1/2/3:` each with `present` / `moving`.
+- `switch:` — `bluetooth`, `multi_target`. (Bluetooth on/off restarts the module to apply.)
 - `button:` — `restart`, `factory_reset`.
 
 ## Known limitations
@@ -207,12 +208,14 @@ hardware — see below.)
 
 The LD2450 can be told to turn its Bluetooth radio **off** (or on) **only
 because its UART protocol provides a dedicated command** for it
-(command word `0x00A4`, value `0x0001`/`0x0000`, wrapped in enter/exit config
-mode). This component exposes that as the `bluetooth` switch. There is no
-out-of-band or "force" method — if a future module or firmware did not offer a
-safe protocol command, Bluetooth could not be disabled from here. The command
-bytes are implemented per the HLK serial protocol but have **not been confirmed
-against a real module** (no hardware).
+(command word `0x00A4`, value `0x0001`/`0x0000`, wrapped in config mode). This
+component exposes that as the `bluetooth` switch. The setting only takes effect
+after a module restart, so the switch sends a restart command (`0x00A3`)
+immediately after — the radar reboots (~1 s) and comes back with Bluetooth in
+the new state. There is no out-of-band or "force" method: if a module/firmware
+did not offer a safe protocol command, Bluetooth could not be disabled from here.
+The command bytes follow the HLK serial protocol; the **radio state change has
+not been independently confirmed** on a module in this environment.
 
 ## Acknowledgements / references
 

@@ -40,11 +40,18 @@ class LD2450UartComponent : public Component, public uart::UARTDevice {
   void set_y_sensor(uint8_t target, sensor::Sensor *s) { this->y_sensors_[target] = s; }
   void set_speed_sensor(uint8_t target, sensor::Sensor *s) { this->speed_sensors_[target] = s; }
   void set_distance_sensor(uint8_t target, sensor::Sensor *s) { this->distance_sensors_[target] = s; }
+  void set_angle_sensor(uint8_t target, sensor::Sensor *s) { this->angle_sensors_[target] = s; }
   void set_resolution_sensor(uint8_t target, sensor::Sensor *s) { this->resolution_sensors_[target] = s; }
   void set_target_count_sensor(sensor::Sensor *s) { this->target_count_sensor_ = s; }
 #endif
 #ifdef USE_BINARY_SENSOR
   void set_presence_binary_sensor(binary_sensor::BinarySensor *s) { this->presence_binary_sensor_ = s; }
+  void set_target_present_binary_sensor(uint8_t target, binary_sensor::BinarySensor *s) {
+    this->target_present_binary_[target] = s;
+  }
+  void set_target_moving_binary_sensor(uint8_t target, binary_sensor::BinarySensor *s) {
+    this->target_moving_binary_[target] = s;
+  }
 #endif
 
   // --- Configuration commands (UART command frames) ---
@@ -70,11 +77,14 @@ class LD2450UartComponent : public Component, public uart::UARTDevice {
   sensor::Sensor *y_sensors_[MAX_TARGETS]{nullptr, nullptr, nullptr};
   sensor::Sensor *speed_sensors_[MAX_TARGETS]{nullptr, nullptr, nullptr};
   sensor::Sensor *distance_sensors_[MAX_TARGETS]{nullptr, nullptr, nullptr};
+  sensor::Sensor *angle_sensors_[MAX_TARGETS]{nullptr, nullptr, nullptr};
   sensor::Sensor *resolution_sensors_[MAX_TARGETS]{nullptr, nullptr, nullptr};
   sensor::Sensor *target_count_sensor_{nullptr};
 #endif
 #ifdef USE_BINARY_SENSOR
   binary_sensor::BinarySensor *presence_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *target_present_binary_[MAX_TARGETS]{nullptr, nullptr, nullptr};
+  binary_sensor::BinarySensor *target_moving_binary_[MAX_TARGETS]{nullptr, nullptr, nullptr};
 #endif
 };
 

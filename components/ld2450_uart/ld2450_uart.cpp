@@ -77,8 +77,19 @@ void LD2450UartComponent::handle_targets_(const ld2450_proto::Target targets[MAX
     if (this->distance_sensors_[i] != nullptr) {
       this->distance_sensors_[i]->publish_state(t.distance());
     }
+    if (this->angle_sensors_[i] != nullptr) {
+      this->angle_sensors_[i]->publish_state(t.angle());
+    }
     if (this->resolution_sensors_[i] != nullptr) {
       this->resolution_sensors_[i]->publish_state(t.resolution);
+    }
+#endif
+#ifdef USE_BINARY_SENSOR
+    if (this->target_present_binary_[i] != nullptr) {
+      this->target_present_binary_[i]->publish_state(t.active);
+    }
+    if (this->target_moving_binary_[i] != nullptr) {
+      this->target_moving_binary_[i]->publish_state(t.moving());
     }
 #endif
   }
@@ -119,11 +130,12 @@ void LD2450UartComponent::exit_config_() {
 }
 
 void LD2450UartComponent::set_bluetooth(bool enable) {
-  ESP_LOGI(TAG, "Setting Bluetooth %s", ONOFF(enable));
+  ESP_LOGI(TAG, "Setting Bluetooth %s (module restarts to apply)", ONOFF(enable));
   this->enter_config_();
   const uint8_t value[2] = {static_cast<uint8_t>(enable ? 0x01 : 0x00), 0x00};
   this->send_command_(ld2450_proto::CMD_BLUETOOTH, value, sizeof(value));
-  this->exit_config_();
+  // The Bluetooth on/off setting only takes effect after a module restart.
+  this->send_command_(ld2450_proto::CMD_RESTART, nullptr, 0);
 }
 
 void LD2450UartComponent::set_multi_target(bool enable) {

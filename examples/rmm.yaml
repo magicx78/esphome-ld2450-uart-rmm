@@ -54,4 +54,5 @@ ld2450_uart:
 binary_sensor:
   - platform: ld2450_uart
     ld2450_uart_id: radar
-    name: "Presence"
+    presence:
+      name: "Presence"

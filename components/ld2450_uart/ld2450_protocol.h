@@ -37,6 +37,13 @@ struct Target {
   float distance() const {
     return std::sqrt(static_cast<float>(x) * x + static_cast<float>(y) * y);
   }
+
+  // Angle in degrees: 0 = straight ahead (+y axis), positive towards +x.
+  float angle() const {
+    return std::atan2(static_cast<float>(x), static_cast<float>(y)) * 57.29577951f;
+  }
+
+  bool moving() const { return speed != 0; }
 };
 
 // Coordinate decoding (matches upstream ESPHome ld2450):

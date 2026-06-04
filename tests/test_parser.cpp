@@ -105,7 +105,10 @@ int run() {
     CHECK(out[0].resolution == 240);
     // distance = sqrt(1000^2 + 1500^2) ~= 1802.7 mm
     CHECK(out[0].distance() > 1802.0f && out[0].distance() < 1803.0f);
-    CHECK(!out[1].active && !out[2].active);
+    // angle = atan2(1000, 1500) ~= 33.69 deg
+    CHECK(out[0].angle() > 33.6f && out[0].angle() < 33.8f);
+    CHECK(out[0].moving());
+    CHECK(!out[1].active && !out[2].active && !out[1].moving());
   }
 
   // --- 3. Negative coordinates and negative speed ---
