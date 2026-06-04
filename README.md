@@ -17,9 +17,11 @@ RMM with no manual entity renaming.
 > y=434 mm, presence on, count=1) and HA registers exactly
 > `sensor.ble_kueche_target_1_x … _3_y` and `sensor.ble_kueche_presence_target_count`.
 > The frame parser also has host unit tests. The **RMM device-name requirement**
-> below was discovered and fixed during that hardware test. Still not exercised on
-> hardware: the config commands (Bluetooth/restart/factory-reset/multi-target) and
-> the final "add radar" click inside the RMM UI — see [Known limitations](#known-limitations).
+> below was discovered and fixed during that hardware test, and the **Bluetooth
+> on/off command was confirmed** (turning it off made the radar's BLE disappear
+> from HA). Still not independently confirmed on hardware: multi/single-target and
+> factory-reset, and the final "add radar" click inside the RMM UI — see
+> [Known limitations](#known-limitations).
 
 ---
 
@@ -188,12 +190,13 @@ hardware — see below.)
 
 ## Known limitations
 
-- **Tested on hardware** for the data path (parsing, sensors, presence,
-  target_count, HA entity registration with correct RMM names). **Not yet
-  exercised on hardware:** the UART **config commands** (Bluetooth on/off,
-  multi/single-target, restart, factory-reset) — the command frames follow the
-  HLK protocol / upstream ESPHome `ld2450` but were not round-tripped against a
-  module.
+- **Tested on hardware:** the data path (parsing, all per-target sensors incl.
+  angle, presence/present/moving, target_count, HA entity registration with
+  correct RMM names) **and** the **Bluetooth on/off command** (confirmed: the
+  radar's BLE stopped/started advertising). Restart is implicitly exercised
+  (the Bluetooth switch uses it). **Not independently confirmed on hardware:**
+  multi/single-target switching and factory-reset — the command frames follow
+  the HLK protocol / upstream ESPHome `ld2450`.
 - **RMM end-to-end:** the entities RMM keys on are present in HA with the exact
   expected names, so RMM will discover the radar. The final step of *adding* the
   radar inside the RMM UI is a user action and was not performed/automated.
@@ -214,8 +217,10 @@ after a module restart, so the switch sends a restart command (`0x00A3`)
 immediately after — the radar reboots (~1 s) and comes back with Bluetooth in
 the new state. There is no out-of-band or "force" method: if a module/firmware
 did not offer a safe protocol command, Bluetooth could not be disabled from here.
-The command bytes follow the HLK serial protocol; the **radio state change has
-not been independently confirmed** on a module in this environment.
+
+**Confirmed on hardware:** toggling the `bluetooth` switch off made the LD2450
+stop advertising BLE — its separate Bluetooth integration in Home Assistant lost
+the device. Toggling back on restores it.
 
 ## Acknowledgements / references
 
