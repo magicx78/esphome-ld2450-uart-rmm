@@ -1,0 +1,54 @@
+# RMM (Radar Map Manager) example.
+#
+# Enabling the `rmm:` block auto-creates sensors whose Home Assistant entity_ids
+# match exactly what Radar Map Manager expects, derived from `radar_name`:
+#
+#   sensor.wohnzimmer_ld2450_target_1_x   sensor.wohnzimmer_ld2450_target_1_y
+#   sensor.wohnzimmer_ld2450_target_2_x   sensor.wohnzimmer_ld2450_target_2_y
+#   sensor.wohnzimmer_ld2450_target_3_x   sensor.wohnzimmer_ld2450_target_3_y
+#   sensor.wohnzimmer_ld2450_presence_target_count
+#
+# In RMM you then add a radar named:  wohnzimmer_ld2450
+#
+# Validate locally:  esphome config examples/rmm.yaml
+
+esphome:
+  name: ld2450-rmm
+  friendly_name: LD2450 RMM
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  baud_rate: 0
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [ld2450_uart]
+
+uart:
+  id: uart_ld2450
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 256000
+  parity: NONE
+  stop_bits: 1
+
+ld2450_uart:
+  id: radar
+  uart_id: uart_ld2450
+  throttle: 200ms
+  rmm:
+    enabled: true
+    radar_name: wohnzimmer_ld2450
+    unit: mm
+
+# Presence is convenient in HA but not required by RMM (it uses target_count).
+binary_sensor:
+  - platform: ld2450_uart
+    ld2450_uart_id: radar
+    name: "Presence"

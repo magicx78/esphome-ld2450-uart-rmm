@@ -1,0 +1,73 @@
+# Basic LD2450 UART example: raw target coordinates, presence and target count.
+#
+# Wiring (ESP32):
+#   LD2450 TX  -> ESP32 GPIO16 (RX)
+#   LD2450 RX  -> ESP32 GPIO17 (TX)
+#   LD2450 5V  -> ESP32 5V
+#   LD2450 GND -> ESP32 GND
+#
+# Validate locally:  esphome config examples/basic.yaml
+
+esphome:
+  name: ld2450-basic
+  friendly_name: LD2450 Basic
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  baud_rate: 0  # free up the hardware UART pins for the radar
+
+# Point ESPHome at this repository's local components directory.
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [ld2450_uart]
+
+uart:
+  id: uart_ld2450
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 256000
+  parity: NONE
+  stop_bits: 1
+
+ld2450_uart:
+  id: radar
+  uart_id: uart_ld2450
+  throttle: 200ms
+
+sensor:
+  - platform: ld2450_uart
+    ld2450_uart_id: radar
+    target_count:
+      name: "Target Count"
+    target_1:
+      x:
+        name: "Target 1 X"
+      y:
+        name: "Target 1 Y"
+      speed:
+        name: "Target 1 Speed"
+      distance:
+        name: "Target 1 Distance"
+      resolution:
+        name: "Target 1 Resolution"
+    target_2:
+      x:
+        name: "Target 2 X"
+      y:
+        name: "Target 2 Y"
+    target_3:
+      x:
+        name: "Target 3 X"
+      y:
+        name: "Target 3 Y"
+
+binary_sensor:
+  - platform: ld2450_uart
+    ld2450_uart_id: radar
+    name: "Presence"

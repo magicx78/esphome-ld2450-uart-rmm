@@ -1,0 +1,30 @@
+# ESPHome build output
+.esphome/
+examples/.esphome/
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Compiled firmware / test binaries
+*.bin
+*.elf
+*.o
+*.out
+test_parser
+/tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
