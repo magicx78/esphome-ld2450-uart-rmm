@@ -14,10 +14,10 @@ optionaler RMM-kompatibler Sensor-Namensgebung. Eigenes GitHub-Repo.
 - [x] Parser-Test: `tests/test_parser.cpp` → 28/28 Checks grün (g++)
 - [x] `esphome config` basic/rmm/full → alle VALID (ESPHome 2026.5.2)
 - [x] RMM-Namen korrekt generiert (esphome config verifiziert)
-- [~] `esphome compile examples/rmm.yaml` → läuft (Toolchain-Download)
+- [x] `esphome compile examples/rmm.yaml` → SUCCESS (firmware.bin, Flash 12.2%)
 - [x] README / LICENSE (MIT) / .gitignore
-- [ ] git init + initial commit
-- [ ] GitHub-Repo erstellen + push (gh installiert; `gh auth login` durch Nutzer offen)
+- [x] git init + initial commit (branch main)
+- [x] GitHub-Repo erstellt + gepusht: https://github.com/magicx78/esphome-ld2450-uart-rmm
 
 ## Bewusst offen (keine Hardware)
 - Kein realer LD2450/ESP32 → keine Live-Werte, keine RMM-Live-Erkennung,
