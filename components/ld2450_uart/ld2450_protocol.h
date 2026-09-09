@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cmath>
+#include <cstring>
 
 namespace ld2450_proto {
 
@@ -117,10 +118,81 @@ static constexpr uint8_t CMD_FOOTER[4] = {0x04, 0x03, 0x02, 0x01};
 static constexpr uint8_t CMD_ENABLE_CONFIG = 0xFF;  // value 0x0001
 static constexpr uint8_t CMD_END_CONFIG = 0xFE;
 static constexpr uint8_t CMD_RESTART = 0xA3;
-static constexpr uint8_t CMD_FACTORY_RESET = 0xA2;
-static constexpr uint8_t CMD_BLUETOOTH = 0xA4;      // value 0x0001 on / 0x0000 off
+static constexpr uint8_t CMD_FACTORY_RESET = 0xA2;  // takes effect after a restart
+static constexpr uint8_t CMD_BLUETOOTH = 0xA4;      // value 0x0001 on / 0x0000 off, after restart
 static constexpr uint8_t CMD_SINGLE_TARGET = 0x80;
 static constexpr uint8_t CMD_MULTI_TARGET = 0x90;
+static constexpr uint8_t CMD_QUERY_TARGET_MODE = 0x91;  // reply data[0]: 0x01 single / 0x02 multi
 static constexpr uint8_t CMD_QUERY_VERSION = 0xA0;
+static constexpr uint8_t CMD_QUERY_MAC = 0xA5;      // value 0x0001; reply data = 6 MAC bytes
+
+// The MAC-query reply carries this sentinel instead of a real address while
+// Bluetooth is disabled (same as upstream ESPHome ld2450). It is the only way
+// to read the module's Bluetooth state back.
+static constexpr uint8_t NO_MAC[6] = {0x08, 0x05, 0x04, 0x03, 0x02, 0x01};
+
+// ---- Command ACK frame ---------------------------------------------------
+// The module answers every command with:
+//   FD FC FB FA | plen_lo plen_hi | cmd 0x01 | status_lo status_hi | data... | 04 03 02 01
+// where plen = 2 (cmd word) + 2 (status) + data length, the 0x01 marks an ACK
+// and status 0x0000 means success.
+static constexpr size_t ACK_MIN_PAYLOAD = 4;
+static constexpr size_t ACK_OVERHEAD = 4 + 2 + 4;  // header + plen + footer
+static constexpr size_t ACK_MAX_LEN = 64;           // longest reply we accept
+
+struct Ack {
+  uint8_t command = 0;
+  uint16_t status = 0;  // 0 = success
+  const uint8_t *data = nullptr;
+  size_t data_len = 0;
+
+  bool ok() const { return status == 0; }
+};
+
+inline bool has_cmd_header(const uint8_t *buf) {
+  return buf[0] == CMD_HEADER[0] && buf[1] == CMD_HEADER[1] && buf[2] == CMD_HEADER[2] &&
+         buf[3] == CMD_HEADER[3];
+}
+
+// Try to parse an ACK frame at the start of `buf`.
+// Returns:  > 0  number of bytes consumed (frame complete and valid, `out` filled)
+//           = 0  frame incomplete, more bytes needed
+//           < 0  not a valid ACK frame (caller should drop a byte and resync)
+inline int parse_ack_frame(const uint8_t *buf, size_t len, Ack &out) {
+  if (buf == nullptr) {
+    return -1;
+  }
+  if (len < 6) {
+    return 0;
+  }
+  if (!has_cmd_header(buf)) {
+    return -1;
+  }
+  const size_t plen = static_cast<size_t>(buf[4]) | (static_cast<size_t>(buf[5]) << 8);
+  const size_t total = ACK_OVERHEAD + plen;
+  if (plen < ACK_MIN_PAYLOAD || total > ACK_MAX_LEN) {
+    return -1;
+  }
+  if (len < total) {
+    return 0;
+  }
+  // Byte 7 is the ACK marker (command word high byte echoed as 0x01).
+  if (buf[7] != 0x01) {
+    return -1;
+  }
+  if (std::memcmp(buf + 6 + plen, CMD_FOOTER, sizeof(CMD_FOOTER)) != 0) {
+    return -1;
+  }
+  out.command = buf[6];
+  out.status = static_cast<uint16_t>(buf[8] | (buf[9] << 8));
+  out.data = buf + 10;
+  out.data_len = plen - ACK_MIN_PAYLOAD;
+  return static_cast<int>(total);
+}
+
+// Interpret a MAC-query reply: true = Bluetooth on (real MAC), false = off.
+inline bool mac_reply_means_bluetooth_on(const Ack &ack) {
+  return ack.data_len >= sizeof(NO_MAC) && std::memcmp(ack.data, NO_MAC, sizeof(NO_MAC)) != 0;
+}
 
 }  // namespace ld2450_proto

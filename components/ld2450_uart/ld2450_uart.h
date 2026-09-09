@@ -6,6 +6,7 @@
 
 #include "ld2450_protocol.h"
 
+#include <deque>
 #include <vector>
 
 #ifdef USE_SENSOR
@@ -53,24 +54,60 @@ class LD2450UartComponent : public Component, public uart::UARTDevice {
     this->target_moving_binary_[target] = s;
   }
 #endif
+#ifdef USE_SWITCH
+  void set_bluetooth_switch(switch_::Switch *s) { this->bluetooth_switch_ = s; }
+  void set_multi_target_switch(switch_::Switch *s) { this->multi_target_switch_ = s; }
+#endif
 
   // --- Configuration commands (UART command frames) ---
-  // Each command enters config mode, sends the command, then exits config mode.
+  // Commands are queued and sent from loop() with a gap between frames, so none
+  // of these calls block the main loop. Every sequence enters config mode first
+  // and either leaves it again or ends in a module restart followed by a
+  // re-read of the module state (read_all_info()).
   // Note: the radar stops reporting target data while in config mode.
   void set_bluetooth(bool enable);
   void set_multi_target(bool enable);
   void restart_module();
   void factory_reset();
+  // Query the MAC (= Bluetooth state) and the tracking mode and publish both to
+  // the switches. Runs once after boot and after every restart.
+  void read_all_info();
 
  protected:
+  struct QueuedCommand {
+    uint8_t command;
+    uint8_t value[2];
+    uint8_t value_len;
+    uint16_t gap_ms;  // wait this long before sending the next queued frame
+  };
+
+  static constexpr uint16_t COMMAND_GAP_MS = 100;
+  static constexpr uint16_t RESTART_GAP_MS = 1500;
+  static constexpr size_t MAX_QUEUED_COMMANDS = 32;
+
+  void process_buffer_();
   void handle_targets_(const ld2450_proto::Target targets[MAX_TARGETS], uint8_t count);
+  void handle_ack_(const ld2450_proto::Ack &ack);
+  void process_command_queue_();
   void send_command_(uint8_t command, const uint8_t *value, uint8_t value_len);
-  void enter_config_();
-  void exit_config_();
+  void enqueue_(uint8_t command, uint16_t gap_ms = COMMAND_GAP_MS);
+  void enqueue_value_(uint8_t command, uint16_t value, uint16_t gap_ms = COMMAND_GAP_MS);
+  void enqueue_enter_config_() { this->enqueue_value_(ld2450_proto::CMD_ENABLE_CONFIG, 0x0001); }
+  void enqueue_exit_config_() { this->enqueue_(ld2450_proto::CMD_END_CONFIG); }
+  void enqueue_restart_and_reread_();
 
   std::vector<uint8_t> buffer_;
+  std::deque<QueuedCommand> command_queue_;
+  uint32_t next_command_at_{0};
   uint32_t throttle_{200};
   uint32_t last_publish_{0};
+  bool pending_bluetooth_{false};
+
+  // Last published target set, for change detection: every publish_state is an
+  // API message to Home Assistant, so unchanged values are not re-sent.
+  ld2450_proto::Target last_[MAX_TARGETS];
+  int16_t last_count_{-1};
+  bool have_last_{false};
 
 #ifdef USE_SENSOR
   sensor::Sensor *x_sensors_[MAX_TARGETS]{nullptr, nullptr, nullptr};
@@ -86,23 +123,26 @@ class LD2450UartComponent : public Component, public uart::UARTDevice {
   binary_sensor::BinarySensor *target_present_binary_[MAX_TARGETS]{nullptr, nullptr, nullptr};
   binary_sensor::BinarySensor *target_moving_binary_[MAX_TARGETS]{nullptr, nullptr, nullptr};
 #endif
+#ifdef USE_SWITCH
+  switch_::Switch *bluetooth_switch_{nullptr};
+  switch_::Switch *multi_target_switch_{nullptr};
+#endif
 };
 
 #ifdef USE_SWITCH
+// The switches are deliberately not optimistic: the state is published only
+// once the module acknowledged the command (and re-read from the module after
+// the Bluetooth restart), so Home Assistant never shows a toggle the radar did
+// not accept. Their initial state comes from read_all_info() after boot, which
+// is why they use restore_mode DISABLED by default.
 class LD2450BluetoothSwitch : public switch_::Switch, public Parented<LD2450UartComponent> {
  protected:
-  void write_state(bool state) override {
-    this->parent_->set_bluetooth(state);
-    this->publish_state(state);
-  }
+  void write_state(bool state) override { this->parent_->set_bluetooth(state); }
 };
 
 class LD2450MultiTargetSwitch : public switch_::Switch, public Parented<LD2450UartComponent> {
  protected:
-  void write_state(bool state) override {
-    this->parent_->set_multi_target(state);
-    this->publish_state(state);
-  }
+  void write_state(bool state) override { this->parent_->set_multi_target(state); }
 };
 #endif
 
