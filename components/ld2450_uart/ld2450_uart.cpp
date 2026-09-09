@@ -139,8 +139,20 @@ void LD2450UartComponent::handle_targets_(const proto::Target targets[MAX_TARGET
 }
 
 void LD2450UartComponent::handle_ack_(const proto::Ack &ack) {
+  // Release the in-flight command; the queue advances only from here (or from
+  // the ACK timeout in process_command_queue_).
+  const bool expected = this->waiting_ack_ && ack.command == this->in_flight_.command;
+  if (expected) {
+    this->waiting_ack_ = false;
+    this->next_command_at_ = millis() + this->in_flight_.gap_ms;
+  } else {
+    ESP_LOGV(TAG, "Unsolicited ACK for command 0x%02X", ack.command);
+  }
   if (!ack.ok()) {
     ESP_LOGW(TAG, "Command 0x%02X rejected by module (status 0x%04X)", ack.command, ack.status);
+    if (expected) {
+      this->abort_sequence_("command rejected");
+    }
     return;
   }
   switch (ack.command) {
@@ -209,35 +221,68 @@ void LD2450UartComponent::handle_ack_(const proto::Ack &ack) {
 
 // --- Command queue --------------------------------------------------------
 
-void LD2450UartComponent::enqueue_(uint8_t command, uint16_t gap_ms) {
-  if (this->command_queue_.size() >= MAX_QUEUED_COMMANDS) {
-    ESP_LOGW(TAG, "Command queue full, dropping command 0x%02X", command);
-    return;
+bool LD2450UartComponent::enqueue_sequence_(std::initializer_list<QueuedCommand> sequence) {
+  // All frames of a sequence or none: a half-queued sequence could leave the
+  // module in config mode (no END_CONFIG) and silently stop target reports.
+  if (this->command_queue_.size() + sequence.size() > MAX_QUEUED_COMMANDS) {
+    ESP_LOGW(TAG, "Command queue full (%u queued), dropping a %u-frame command sequence",
+             static_cast<unsigned>(this->command_queue_.size()), static_cast<unsigned>(sequence.size()));
+    return false;
   }
-  this->command_queue_.push_back(QueuedCommand{command, {0x00, 0x00}, 0, gap_ms});
+  for (const QueuedCommand &q : sequence) {
+    this->command_queue_.push_back(q);
+  }
+  return true;
 }
 
-void LD2450UartComponent::enqueue_value_(uint8_t command, uint16_t value, uint16_t gap_ms) {
-  if (this->command_queue_.size() >= MAX_QUEUED_COMMANDS) {
-    ESP_LOGW(TAG, "Command queue full, dropping command 0x%02X", command);
-    return;
+// Drop the remaining frames and make sure the module ends up in normal
+// (reporting) mode again. The recovery END_CONFIG is not re-queued if it is
+// the frame that failed, so this cannot loop.
+void LD2450UartComponent::abort_sequence_(const char *reason) {
+  const size_t dropped = this->command_queue_.size();
+  this->command_queue_.clear();
+  this->waiting_ack_ = false;
+  if (this->in_flight_.command != proto::CMD_END_CONFIG) {
+    ESP_LOGW(TAG, "Aborting command sequence (%s), %u frame(s) dropped, leaving config mode", reason,
+             static_cast<unsigned>(dropped));
+    this->command_queue_.push_back(exit_config_());
+  } else {
+    ESP_LOGW(TAG, "Aborting command sequence (%s), %u frame(s) dropped", reason, static_cast<unsigned>(dropped));
   }
-  this->command_queue_.push_back(
-      QueuedCommand{command, {static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>(value >> 8)}, 2, gap_ms});
+  this->next_command_at_ = millis() + COMMAND_GAP_MS;
 }
 
 void LD2450UartComponent::process_command_queue_() {
+  const uint32_t now = millis();
+  if (this->waiting_ack_) {
+    if (now - this->sent_at_ < ACK_TIMEOUT_MS) {
+      return;  // still waiting for the module's answer
+    }
+    if (this->in_flight_.command == proto::CMD_RESTART) {
+      // Some modules reboot before the ACK goes out; treat that as done and
+      // let the restart gap run before the re-read.
+      ESP_LOGD(TAG, "No ACK for restart, assuming the module rebooted");
+      this->waiting_ack_ = false;
+      this->next_command_at_ = now + this->in_flight_.gap_ms;
+    } else {
+      ESP_LOGW(TAG, "No ACK for command 0x%02X within %u ms", this->in_flight_.command,
+               static_cast<unsigned>(ACK_TIMEOUT_MS));
+      this->abort_sequence_("ACK timeout");
+      return;
+    }
+  }
   if (this->command_queue_.empty()) {
     return;
   }
-  const uint32_t now = millis();
   if (static_cast<int32_t>(now - this->next_command_at_) < 0) {
     return;
   }
-  const QueuedCommand q = this->command_queue_.front();
+  this->in_flight_ = this->command_queue_.front();
   this->command_queue_.pop_front();
-  this->send_command_(q.command, q.value_len > 0 ? q.value : nullptr, q.value_len);
-  this->next_command_at_ = now + q.gap_ms;
+  this->send_command_(this->in_flight_.command, this->in_flight_.value_len > 0 ? this->in_flight_.value : nullptr,
+                      this->in_flight_.value_len);
+  this->sent_at_ = now;
+  this->waiting_ack_ = true;
 }
 
 void LD2450UartComponent::send_command_(uint8_t command, const uint8_t *value, uint8_t value_len) {
@@ -252,50 +297,47 @@ void LD2450UartComponent::send_command_(uint8_t command, const uint8_t *value, u
   this->flush();
 }
 
-// After a restart the module boots in normal (reporting) mode, so the re-read
-// enters config mode again on its own and leaves it at the end.
-void LD2450UartComponent::enqueue_restart_and_reread_() {
-  this->enqueue_(proto::CMD_RESTART, RESTART_GAP_MS);
-  this->read_all_info();
-}
+// --- Command sequences ----------------------------------------------------
+// After a restart the module boots in normal (reporting) mode, so every
+// sequence that restarts enters config mode again for the state re-read and
+// leaves it at the end.
 
 void LD2450UartComponent::read_all_info() {
-  this->enqueue_enter_config_();
-  this->enqueue_value_(proto::CMD_QUERY_MAC, 0x0001);
-  this->enqueue_(proto::CMD_QUERY_TARGET_MODE);
-  this->enqueue_exit_config_();
+  this->enqueue_sequence_({enter_config_(), cmd_value_(proto::CMD_QUERY_MAC, 0x0001),
+                           cmd_(proto::CMD_QUERY_TARGET_MODE), exit_config_()});
 }
 
 void LD2450UartComponent::set_bluetooth(bool enable) {
   ESP_LOGI(TAG, "Setting Bluetooth %s (module restarts to apply)", ONOFF(enable));
-  this->pending_bluetooth_ = enable;
-  this->enqueue_enter_config_();
-  this->enqueue_value_(proto::CMD_BLUETOOTH, enable ? 0x0001 : 0x0000);
   // The setting only takes effect after a module restart; the re-read
   // afterwards publishes the state the module actually came back with.
-  this->enqueue_restart_and_reread_();
+  if (this->enqueue_sequence_({enter_config_(), cmd_value_(proto::CMD_BLUETOOTH, enable ? 0x0001 : 0x0000),
+                               cmd_(proto::CMD_RESTART, RESTART_GAP_MS), enter_config_(),
+                               cmd_value_(proto::CMD_QUERY_MAC, 0x0001), cmd_(proto::CMD_QUERY_TARGET_MODE),
+                               exit_config_()})) {
+    this->pending_bluetooth_ = enable;
+  }
 }
 
 void LD2450UartComponent::set_multi_target(bool enable) {
   ESP_LOGI(TAG, "Setting multi-target tracking %s", ONOFF(enable));
-  this->enqueue_enter_config_();
-  this->enqueue_(enable ? proto::CMD_MULTI_TARGET : proto::CMD_SINGLE_TARGET);
-  this->enqueue_(proto::CMD_QUERY_TARGET_MODE);
-  this->enqueue_exit_config_();
+  this->enqueue_sequence_({enter_config_(), cmd_(enable ? proto::CMD_MULTI_TARGET : proto::CMD_SINGLE_TARGET),
+                           cmd_(proto::CMD_QUERY_TARGET_MODE), exit_config_()});
 }
 
 void LD2450UartComponent::restart_module() {
   ESP_LOGI(TAG, "Restarting LD2450 module");
-  this->enqueue_enter_config_();
-  this->enqueue_restart_and_reread_();
+  this->enqueue_sequence_({enter_config_(), cmd_(proto::CMD_RESTART, RESTART_GAP_MS), enter_config_(),
+                           cmd_value_(proto::CMD_QUERY_MAC, 0x0001), cmd_(proto::CMD_QUERY_TARGET_MODE),
+                           exit_config_()});
 }
 
 void LD2450UartComponent::factory_reset() {
   ESP_LOGW(TAG, "Factory-resetting LD2450 module (restarts to apply)");
-  this->enqueue_enter_config_();
-  this->enqueue_(proto::CMD_FACTORY_RESET);
   // Per the protocol manual the defaults only take effect after a restart.
-  this->enqueue_restart_and_reread_();
+  this->enqueue_sequence_({enter_config_(), cmd_(proto::CMD_FACTORY_RESET), cmd_(proto::CMD_RESTART, RESTART_GAP_MS),
+                           enter_config_(), cmd_value_(proto::CMD_QUERY_MAC, 0x0001),
+                           cmd_(proto::CMD_QUERY_TARGET_MODE), exit_config_()});
 }
 
 void LD2450UartComponent::dump_config() {

@@ -36,8 +36,9 @@ RMM with no manual entity renaming.
 - Configuration controls: **Bluetooth** on/off switch, **multi/single-target**
   switch, **restart** and **factory-reset** buttons. Switch states are read back
   from the module (command ACKs + MAC query), never assumed.
-- Non-blocking command queue; every command frame is acknowledged by the module
-  before the next one is sent.
+- Non-blocking command queue: sequences are queued atomically, each frame waits
+  for the module's ACK before the next one goes out, and a rejected or missing
+  ACK aborts the sequence and leaves config mode again.
 - Only changed values are published (change detection per sensor), with a
   configurable `throttle` for the numeric sensors and optional `filters:` for the
   RMM sensors.
@@ -237,9 +238,11 @@ The LD2450 can be told to turn its Bluetooth radio **off** (or on) **only
 because its UART protocol provides a dedicated command** for it
 (command word `0x00A4`, value `0x0001`/`0x0000`, wrapped in config mode). This
 component exposes that as the `bluetooth` switch. The setting only takes effect
-after a module restart, so the switch queues: enter config mode → Bluetooth
-command → (200 ms later) restart (`0x00A3`) → (1.5 s later) MAC query (`0x00A5`)
-→ exit config mode. The switch state in Home Assistant is published when the
+after a module restart, so the switch queues one sequence: enter config mode →
+Bluetooth command → restart (`0x00A3`, sent once the Bluetooth command was
+acknowledged) → (1.5 s later) enter config mode → MAC query (`0x00A5`) → exit
+config mode. Each frame waits for the module's ACK; a rejected or missing ACK
+aborts the sequence. The switch state in Home Assistant is published when the
 module acknowledges the Bluetooth command and again from the MAC query after the
 reboot: the module answers with the sentinel MAC `08:05:04:03:02:01` while
 Bluetooth is off, and with its real address while it is on. The same query runs

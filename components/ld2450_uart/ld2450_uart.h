@@ -7,6 +7,7 @@
 #include "ld2450_protocol.h"
 
 #include <deque>
+#include <initializer_list>
 #include <vector>
 
 #ifdef USE_SENSOR
@@ -60,10 +61,13 @@ class LD2450UartComponent : public Component, public uart::UARTDevice {
 #endif
 
   // --- Configuration commands (UART command frames) ---
-  // Commands are queued and sent from loop() with a gap between frames, so none
-  // of these calls block the main loop. Every sequence enters config mode first
-  // and either leaves it again or ends in a module restart followed by a
-  // re-read of the module state (read_all_info()).
+  // Each call queues one complete command sequence (atomically: all frames or
+  // none). loop() sends one frame at a time and only advances to the next one
+  // once the module acknowledged the previous frame; a rejected ACK or an ACK
+  // timeout aborts the rest of the sequence and sends END_CONFIG so the module
+  // never stays stuck in config mode. Nothing here blocks the main loop.
+  // Every sequence enters config mode first and either leaves it again or ends
+  // in a module restart followed by a re-read of the module state.
   // Note: the radar stops reporting target data while in config mode.
   void set_bluetooth(bool enable);
   void set_multi_target(bool enable);
@@ -78,26 +82,36 @@ class LD2450UartComponent : public Component, public uart::UARTDevice {
     uint8_t command;
     uint8_t value[2];
     uint8_t value_len;
-    uint16_t gap_ms;  // wait this long before sending the next queued frame
+    uint16_t gap_ms;  // wait this long after the ACK before sending the next frame
   };
 
-  static constexpr uint16_t COMMAND_GAP_MS = 100;
-  static constexpr uint16_t RESTART_GAP_MS = 1500;
+  static constexpr uint16_t COMMAND_GAP_MS = 50;
+  static constexpr uint16_t RESTART_GAP_MS = 1500;  // module reboot time
+  static constexpr uint16_t ACK_TIMEOUT_MS = 500;
   static constexpr size_t MAX_QUEUED_COMMANDS = 32;
 
   void process_buffer_();
   void handle_targets_(const ld2450_proto::Target targets[MAX_TARGETS], uint8_t count);
   void handle_ack_(const ld2450_proto::Ack &ack);
   void process_command_queue_();
+  void abort_sequence_(const char *reason);
   void send_command_(uint8_t command, const uint8_t *value, uint8_t value_len);
-  void enqueue_(uint8_t command, uint16_t gap_ms = COMMAND_GAP_MS);
-  void enqueue_value_(uint8_t command, uint16_t value, uint16_t gap_ms = COMMAND_GAP_MS);
-  void enqueue_enter_config_() { this->enqueue_value_(ld2450_proto::CMD_ENABLE_CONFIG, 0x0001); }
-  void enqueue_exit_config_() { this->enqueue_(ld2450_proto::CMD_END_CONFIG); }
-  void enqueue_restart_and_reread_();
+  // Append a whole sequence, or nothing at all if it would not fit.
+  bool enqueue_sequence_(std::initializer_list<QueuedCommand> sequence);
+  static QueuedCommand cmd_(uint8_t command, uint16_t gap_ms = COMMAND_GAP_MS) {
+    return QueuedCommand{command, {0x00, 0x00}, 0, gap_ms};
+  }
+  static QueuedCommand cmd_value_(uint8_t command, uint16_t value, uint16_t gap_ms = COMMAND_GAP_MS) {
+    return QueuedCommand{command, {static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>(value >> 8)}, 2, gap_ms};
+  }
+  static QueuedCommand enter_config_() { return cmd_value_(ld2450_proto::CMD_ENABLE_CONFIG, 0x0001); }
+  static QueuedCommand exit_config_() { return cmd_(ld2450_proto::CMD_END_CONFIG); }
 
   std::vector<uint8_t> buffer_;
   std::deque<QueuedCommand> command_queue_;
+  QueuedCommand in_flight_{0, {0x00, 0x00}, 0, 0};
+  bool waiting_ack_{false};
+  uint32_t sent_at_{0};
   uint32_t next_command_at_{0};
   uint32_t throttle_{200};
   uint32_t last_publish_{0};
