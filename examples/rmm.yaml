@@ -10,6 +10,10 @@
 #
 # In RMM you then add a radar named:  wohnzimmer_ld2450
 #
+# `radar_name` may be omitted; it then defaults to the Home Assistant slug of the
+# device name (friendly_name, or name). Umlauts are transliterated like HA does
+# (friendly_name "Küche LD2450" -> kuche_ld2450).
+#
 # Validate locally:  esphome config examples/rmm.yaml
 
 # The device name MUST match rmm.radar_name (HA prefixes entity_ids with the
@@ -50,6 +54,10 @@ ld2450_uart:
     enabled: true
     radar_name: wohnzimmer_ld2450
     unit: mm
+    # Optional extra filters for the six coordinate sensors, e.g. to reduce
+    # recorder load in Home Assistant (unchanged values are never re-sent anyway):
+    # filters:
+    #   - delta: 10
 
 # Presence is convenient in HA but not required by RMM (it uses target_count).
 binary_sensor:

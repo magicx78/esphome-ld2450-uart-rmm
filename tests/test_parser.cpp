@@ -9,6 +9,8 @@
 // asserts the decoded x / y / speed / resolution values, the active-target flag
 // and the target count. Frames are constructed with the inverse of the decode
 // rule, so the test exercises the exact byte order and sign-bit handling.
+// The second half feeds command ACK frames into parse_ack_frame (MAC query =
+// Bluetooth state, tracking-mode query, error status, resync cases).
 
 #include "ld2450_protocol.h"
 
@@ -17,6 +19,7 @@
 #include <cstdio>
 #include <vector>
 
+using ld2450_proto::Ack;
 using ld2450_proto::Target;
 
 static int g_checks = 0;
@@ -72,6 +75,22 @@ static std::vector<uint8_t> build_frame(const RawTarget t[3]) {
     f.push_back(static_cast<uint8_t>((t[i].resolution >> 8) & 0xFF));
   }
   for (int i = 0; i < 2; i++) f.push_back(ld2450_proto::DATA_TAIL[i]);
+  return f;
+}
+
+// Build a command ACK frame: FD FC FB FA | plen | cmd 01 | status | data | 04 03 02 01
+static std::vector<uint8_t> build_ack(uint8_t cmd, uint16_t status, const std::vector<uint8_t> &data) {
+  std::vector<uint8_t> f;
+  for (int i = 0; i < 4; i++) f.push_back(ld2450_proto::CMD_HEADER[i]);
+  const uint16_t plen = static_cast<uint16_t>(4 + data.size());
+  f.push_back(static_cast<uint8_t>(plen & 0xFF));
+  f.push_back(static_cast<uint8_t>(plen >> 8));
+  f.push_back(cmd);
+  f.push_back(0x01);
+  f.push_back(static_cast<uint8_t>(status & 0xFF));
+  f.push_back(static_cast<uint8_t>(status >> 8));
+  f.insert(f.end(), data.begin(), data.end());
+  for (int i = 0; i < 4; i++) f.push_back(ld2450_proto::CMD_FOOTER[i]);
   return f;
 }
 
@@ -158,6 +177,89 @@ int run() {
   {
     std::vector<uint8_t> tooShort(ld2450_proto::FRAME_LEN - 1, 0xAA);
     CHECK(!ld2450_proto::parse_data_frame(tooShort.data(), tooShort.size(), out, count));
+  }
+
+  // --- 8. ACK: MAC query reply with a real MAC => Bluetooth on ---
+  {
+    auto f = build_ack(ld2450_proto::CMD_QUERY_MAC, 0x0000, {0x11, 0x22, 0x33, 0x44, 0x55, 0x66});
+    CHECK(f.size() == 20);
+    Ack ack;
+    CHECK(ld2450_proto::parse_ack_frame(f.data(), f.size(), ack) == 20);
+    CHECK(ack.command == ld2450_proto::CMD_QUERY_MAC);
+    CHECK(ack.ok());
+    CHECK(ack.data_len == 6);
+    CHECK(ack.data[0] == 0x11 && ack.data[5] == 0x66);
+    CHECK(ld2450_proto::mac_reply_means_bluetooth_on(ack));
+    // Bytes following the frame (start of the next data frame) must not matter.
+    f.push_back(0xAA);
+    f.push_back(0xFF);
+    CHECK(ld2450_proto::parse_ack_frame(f.data(), f.size(), ack) == 20);
+  }
+
+  // --- 9. ACK: MAC query reply with the NO_MAC sentinel => Bluetooth off ---
+  {
+    std::vector<uint8_t> no_mac(ld2450_proto::NO_MAC, ld2450_proto::NO_MAC + 6);
+    auto f = build_ack(ld2450_proto::CMD_QUERY_MAC, 0x0000, no_mac);
+    Ack ack;
+    CHECK(ld2450_proto::parse_ack_frame(f.data(), f.size(), ack) == static_cast<int>(f.size()));
+    CHECK(ack.ok());
+    CHECK(!ld2450_proto::mac_reply_means_bluetooth_on(ack));
+  }
+
+  // --- 10. ACK: tracking-mode query, and a plain command ACK without data ---
+  {
+    auto f = build_ack(ld2450_proto::CMD_QUERY_TARGET_MODE, 0x0000, {0x02, 0x00});
+    Ack ack;
+    CHECK(ld2450_proto::parse_ack_frame(f.data(), f.size(), ack) == static_cast<int>(f.size()));
+    CHECK(ack.command == ld2450_proto::CMD_QUERY_TARGET_MODE);
+    CHECK(ack.data_len == 2 && ack.data[0] == 0x02);
+
+    auto g = build_ack(ld2450_proto::CMD_ENABLE_CONFIG, 0x0000, {});
+    CHECK(g.size() == 14);
+    CHECK(ld2450_proto::parse_ack_frame(g.data(), g.size(), ack) == 14);
+    CHECK(ack.command == ld2450_proto::CMD_ENABLE_CONFIG && ack.data_len == 0 && ack.ok());
+  }
+
+  // --- 11. ACK: failure status is reported, not treated as success ---
+  {
+    auto f = build_ack(ld2450_proto::CMD_BLUETOOTH, 0x0001, {});
+    Ack ack;
+    CHECK(ld2450_proto::parse_ack_frame(f.data(), f.size(), ack) > 0);
+    CHECK(!ack.ok());
+    CHECK(ack.status == 1);
+  }
+
+  // --- 12. ACK: incomplete frames ask for more bytes at every prefix length ---
+  {
+    auto f = build_ack(ld2450_proto::CMD_QUERY_MAC, 0x0000, {0x11, 0x22, 0x33, 0x44, 0x55, 0x66});
+    Ack ack;
+    for (size_t n = 0; n < f.size(); n++) {
+      CHECK(ld2450_proto::parse_ack_frame(f.data(), n, ack) == 0);
+    }
+  }
+
+  // --- 13. ACK: corrupt frames are rejected (caller drops a byte and resyncs) ---
+  {
+    auto f = build_ack(ld2450_proto::CMD_QUERY_MAC, 0x0000, {0x11, 0x22, 0x33, 0x44, 0x55, 0x66});
+    Ack ack;
+    auto bad_footer = f;
+    bad_footer[bad_footer.size() - 1] = 0x00;
+    CHECK(ld2450_proto::parse_ack_frame(bad_footer.data(), bad_footer.size(), ack) < 0);
+    auto bad_marker = f;
+    bad_marker[7] = 0x00;  // not an ACK (would be a command echo)
+    CHECK(ld2450_proto::parse_ack_frame(bad_marker.data(), bad_marker.size(), ack) < 0);
+    auto bad_header = f;
+    bad_header[1] = 0x00;
+    CHECK(ld2450_proto::parse_ack_frame(bad_header.data(), bad_header.size(), ack) < 0);
+    // A bogus huge length must be rejected immediately instead of waiting forever.
+    auto huge = f;
+    huge[4] = 0xFF;
+    huge[5] = 0x7F;
+    CHECK(ld2450_proto::parse_ack_frame(huge.data(), huge.size(), ack) < 0);
+    // A payload shorter than cmd+status is invalid too.
+    auto tiny = f;
+    tiny[4] = 0x02;
+    CHECK(ld2450_proto::parse_ack_frame(tiny.data(), tiny.size(), ack) < 0);
   }
 
   return 0;
